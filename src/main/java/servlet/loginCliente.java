@@ -1,87 +1,101 @@
-/*
- * Click nbfs://nbhost/SystemFileSystem/Templates/Licenses/license-default.txt to change this license
- * Click nbfs://nbhost/SystemFileSystem/Templates/JSP_Servlet/Servlet.java to edit this template
- */
 package servlet;
 
+import com.google.gson.Gson;
+import com.google.gson.JsonObject;
+import dao.ClienteJpaController;
+import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.PrintWriter;
+import javax.persistence.EntityManagerFactory;
+import javax.persistence.Persistence;
 import javax.servlet.ServletException;
 import javax.servlet.annotation.WebServlet;
 import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
+import util.JwtUtil;
+import org.mindrot.jbcrypt.BCrypt;
 
-/**
- *
- * @author SASHA
- */
 @WebServlet(name = "loginCliente", urlPatterns = {"/logincliente"})
 public class loginCliente extends HttpServlet {
 
-    /**
-     * Processes requests for both HTTP <code>GET</code> and <code>POST</code>
-     * methods.
-     *
-     * @param request servlet request
-     * @param response servlet response
-     * @throws ServletException if a servlet-specific error occurs
-     * @throws IOException if an I/O error occurs
-     */
+    private final EntityManagerFactory emf = Persistence.createEntityManagerFactory("com.mycompany_Pry02_war_1.0-SNAPSHOTPU");
+    private final ClienteJpaController clienteDAO = new ClienteJpaController(emf);
+    private final Gson gson = new Gson();
+
     protected void processRequest(HttpServletRequest request, HttpServletResponse response)
             throws ServletException, IOException {
-        response.setContentType("text/html;charset=UTF-8");
+
+        response.setContentType("application/json;charset=UTF-8");
+
         try (PrintWriter out = response.getWriter()) {
-            /* TODO output your page here. You may use following sample code. */
-            out.println("<!DOCTYPE html>");
-            out.println("<html>");
-            out.println("<head>");
-            out.println("<title>Servlet loginCliente</title>");            
-            out.println("</head>");
-            out.println("<body>");
-            out.println("<h1>Servlet loginCliente at " + request.getContextPath() + "</h1>");
-            out.println("</body>");
-            out.println("</html>");
+
+            // Leer JSON del cuerpo POST
+            StringBuilder sb = new StringBuilder();
+            try (BufferedReader reader = request.getReader()) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    sb.append(line);
+                }
+            }
+
+            JsonObject json = gson.fromJson(sb.toString(), JsonObject.class);
+            if (json == null || !json.has("user") || !json.has("pass")) {
+                out.println("{\"resultado\":\"error\",\"mensaje\":\"Faltan parámetros\"}");
+                return;
+            }
+
+            String userParam = json.get("user").getAsString();
+            String pass = json.get("pass").getAsString();
+
+            int codiClie;
+            try {
+                codiClie = Integer.parseInt(userParam);
+            } catch (NumberFormatException e) {
+                out.println("{\"resultado\":\"error\", \"mensaje\":\"Usuario inválido\"}");
+                return;
+            }
+
+            // Obtener hash bcrypt almacenado (hash de pass+user)
+            String hashedPassword = clienteDAO.obtenerPasswordPorCodigo(codiClie);
+            if (hashedPassword == null) {
+                out.println("{\"resultado\":\"error\",\"mensaje\":\"Usuario no encontrado\"}");
+                return;
+            }
+
+            // Concatenar pass + user
+            String passConUser = pass + userParam;
+
+            // Validar contraseña con bcrypt
+            boolean valido = BCrypt.checkpw(passConUser, hashedPassword);
+
+            if (valido) {
+                try {
+                    String token = JwtUtil.generarToken(userParam);
+                    request.getSession().setAttribute("usuario", userParam);
+                    out.println("{\"resultado\":\"ok\",\"token\":\"" + token + "\"}");
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    out.println("{\"resultado\":\"error\",\"mensaje\":\"Error al generar token\"}");
+                }
+            } else {
+                out.println("{\"resultado\":\"error\",\"mensaje\":\"Usuario o contraseña incorrectos\"}");
+            }
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            response.getWriter().println("{\"resultado\":\"error\",\"mensaje\":\"Error interno del servidor\"}");
         }
     }
 
-    // <editor-fold defaultstate="collapsed" desc="HttpServlet methods. Click on the + sign on the left to edit the code.">
-    /**
-     * Handles the HTTP <code>GET</code> method.
-     *
-     * @param request servlet request
-     * @param response servlet response
-     * @throws ServletException if a servlet-specific error occurs
-     * @throws IOException if an I/O error occurs
-     */
-    @Override
-    protected void doGet(HttpServletRequest request, HttpServletResponse response)
-            throws ServletException, IOException {
-        processRequest(request, response);
-    }
-
-    /**
-     * Handles the HTTP <code>POST</code> method.
-     *
-     * @param request servlet request
-     * @param response servlet response
-     * @throws ServletException if a servlet-specific error occurs
-     * @throws IOException if an I/O error occurs
-     */
     @Override
     protected void doPost(HttpServletRequest request, HttpServletResponse response)
             throws ServletException, IOException {
         processRequest(request, response);
     }
 
-    /**
-     * Returns a short description of the servlet.
-     *
-     * @return a String containing servlet description
-     */
     @Override
     public String getServletInfo() {
-        return "Short description";
-    }// </editor-fold>
-
+        return "Servlet para login de cliente con bcrypt y JWT";
+    }
 }
